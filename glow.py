@@ -26,8 +26,11 @@
 # *****************************************************************************
 import copy
 import torch
+import torch.nn as nn
 from torch.autograd import Variable
+from layers import ConvNorm
 import torch.nn.functional as F
+import sys
 
 
 @torch.jit.script
@@ -40,7 +43,7 @@ def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
     return acts
 
 
-class WaveGlowLoss(torch.nn.Module):
+class WaveGlowLoss(nn.Module):
     def __init__(self, sigma=1.0):
         super(WaveGlowLoss, self).__init__()
         self.sigma = sigma
@@ -59,7 +62,7 @@ class WaveGlowLoss(torch.nn.Module):
         return loss/(z.size(0)*z.size(1)*z.size(2))
 
 
-class Invertible1x1Conv(torch.nn.Module):
+class Invertible1x1Conv(nn.Module):
     """
     The layer outputs both the convolution, and the log determinant
     of its weight matrix.  If reverse=True it does convolution with
@@ -67,7 +70,7 @@ class Invertible1x1Conv(torch.nn.Module):
     """
     def __init__(self, c):
         super(Invertible1x1Conv, self).__init__()
-        self.conv = torch.nn.Conv1d(c, c, kernel_size=1, stride=1, padding=0,
+        self.conv = nn.Conv1d(c, c, kernel_size=1, stride=1, padding=0,
                                     bias=False)
 
         # Sample a random orthonormal matrix to initialize weights
@@ -102,7 +105,7 @@ class Invertible1x1Conv(torch.nn.Module):
             return z, log_det_W
 
 
-class WN(torch.nn.Module):
+class WN(nn.Module):
     """
     This is the WaveNet like layer for the affine coupling.  The primary difference
     from WaveNet is the convolutions need not be causal.  There is also no dilation
@@ -115,17 +118,17 @@ class WN(torch.nn.Module):
         assert(n_channels % 2 == 0)
         self.n_layers = n_layers
         self.n_channels = n_channels
-        self.in_layers = torch.nn.ModuleList()
-        self.res_skip_layers = torch.nn.ModuleList()
-        self.cond_layers = torch.nn.ModuleList()
+        self.in_layers = nn.ModuleList()
+        self.res_skip_layers = nn.ModuleList()
+        self.cond_layers = nn.ModuleList()
 
-        start = torch.nn.Conv1d(n_in_channels, n_channels, 1)
-        start = torch.nn.utils.weight_norm(start, name='weight')
+        start = nn.Conv1d(n_in_channels, n_channels, 1)
+        start = nn.utils.weight_norm(start, name='weight')
         self.start = start
 
         # Initializing last layer to 0 makes the affine coupling layers
         # do nothing at first.  This helps with training stability
-        end = torch.nn.Conv1d(n_channels, 2*n_in_channels, 1)
+        end = nn.Conv1d(n_channels, 2*n_in_channels, 1)
         end.weight.data.zero_()
         end.bias.data.zero_()
         self.end = end
@@ -133,13 +136,13 @@ class WN(torch.nn.Module):
         for i in range(n_layers):
             dilation = 2 ** i
             padding = int((kernel_size*dilation - dilation)/2)
-            in_layer = torch.nn.Conv1d(n_channels, 2*n_channels, kernel_size,
+            in_layer = nn.Conv1d(n_channels, 2*n_channels, kernel_size,
                                        dilation=dilation, padding=padding)
-            in_layer = torch.nn.utils.weight_norm(in_layer, name='weight')
+            in_layer = nn.utils.weight_norm(in_layer, name='weight')
             self.in_layers.append(in_layer)
 
-            cond_layer = torch.nn.Conv1d(n_mel_channels, 2*n_channels, 1)
-            cond_layer = torch.nn.utils.weight_norm(cond_layer, name='weight')
+            cond_layer = nn.Conv1d(n_mel_channels, 2*n_channels, 1)
+            cond_layer = nn.utils.weight_norm(cond_layer, name='weight')
             self.cond_layers.append(cond_layer)
 
             # last one is not necessary
@@ -147,8 +150,8 @@ class WN(torch.nn.Module):
                 res_skip_channels = 2*n_channels
             else:
                 res_skip_channels = n_channels
-            res_skip_layer = torch.nn.Conv1d(n_channels, res_skip_channels, 1)
-            res_skip_layer = torch.nn.utils.weight_norm(res_skip_layer, name='weight')
+            res_skip_layer = nn.Conv1d(n_channels, res_skip_channels, 1)
+            res_skip_layer = nn.utils.weight_norm(res_skip_layer, name='weight')
             self.res_skip_layers.append(res_skip_layer)
 
     def forward(self, forward_input):
@@ -174,34 +177,146 @@ class WN(torch.nn.Module):
                 output = skip_acts + output
         return self.end(output)
 
+class Attention(nn.Module):
+    def __init__(self, attention_rnn_dim, embedding_dim, attention_dim,
+                 attention_location_n_filters, attention_location_kernel_size):
+        super(Attention, self).__init__()
+        self.query_layer = LinearNorm(attention_rnn_dim, attention_dim,
+                                      bias=False, w_init_gain='tanh')
+        self.memory_layer = LinearNorm(embedding_dim, attention_dim, bias=False,
+                                       w_init_gain='tanh')
+        self.v = LinearNorm(attention_dim, 1, bias=False)
+        self.location_layer = LocationLayer(attention_location_n_filters,
+                                            attention_location_kernel_size,
+                                            attention_dim)
+        self.score_mask_value = -float("inf")
 
-class WaveGlow(torch.nn.Module):
-    def __init__(self, n_mel_channels, n_flows, n_group, n_early_every,
-                 n_early_size, WN_config):
+    def get_alignment_energies(self, query, processed_memory,
+                               attention_weights_cat):
+        """
+        PARAMS
+        ------
+        query: decoder output (batch, n_mel_channels * n_frames_per_step)
+        processed_memory: processed encoder outputs (B, T_in, attention_dim)
+        attention_weights_cat: cumulative and prev. att weights (B, 2, max_time)
+
+        RETURNS
+        -------
+        alignment (batch, max_time)
+        """
+
+        processed_query = self.query_layer(query.unsqueeze(1))
+        processed_attention_weights = self.location_layer(attention_weights_cat)
+        energies = self.v(F.tanh(
+            processed_query + processed_attention_weights + processed_memory))
+
+        energies = energies.squeeze(-1)
+        return energies
+
+    def forward(self, attention_hidden_state, memory, processed_memory,
+                attention_weights_cat, mask):
+        """
+        PARAMS
+        ------
+        attention_hidden_state: attention rnn last output
+        memory: encoder outputs
+        processed_memory: processed encoder outputs
+        attention_weights_cat: previous and cummulative attention weights
+        mask: binary mask for padded data
+        """
+        alignment = self.get_alignment_energies(
+            attention_hidden_state, processed_memory, attention_weights_cat)
+
+        if mask is not None:
+            alignment.data.masked_fill_(mask, self.score_mask_value)
+
+        attention_weights = F.softmax(alignment, dim=1)
+        attention_context = torch.bmm(attention_weights.unsqueeze(1), memory)
+        attention_context = attention_context.squeeze(1)
+
+        return attention_context, attention_weights
+
+class Encoder(nn.Module):
+    """Encoder module:
+        - Three 1-d convolution banks
+        - Bidirectional LSTM
+    """
+    def __init__(self, hparams):
+        super(Encoder, self).__init__()
+
+        convolutions = []
+        for _ in range(hparams.encoder_n_convolutions):
+            conv_layer = nn.Sequential(
+                ConvNorm(hparams.encoder_embedding_dim,
+                         hparams.encoder_embedding_dim,
+                         kernel_size=hparams.encoder_kernel_size, stride=1,
+                         padding=int((hparams.encoder_kernel_size - 1) / 2),
+                         dilation=1, w_init_gain='relu'),
+                nn.BatchNorm1d(hparams.encoder_embedding_dim))
+            convolutions.append(conv_layer)
+        self.convolutions = nn.ModuleList(convolutions)
+
+        self.lstm = nn.LSTM(hparams.encoder_embedding_dim,
+                            int(hparams.encoder_embedding_dim / 2), 1,
+                            batch_first=True, bidirectional=True)
+
+    def forward(self, x, input_lengths):
+        for conv in self.convolutions:
+            x = F.dropout(F.relu(conv(x)), 0.5, self.training)
+
+        x = x.transpose(1, 2)
+
+        # pytorch tensor are not reversible, hence the conversion
+        input_lengths = input_lengths.cpu().numpy()
+        x = nn.utils.rnn.pack_padded_sequence(
+            x, input_lengths, batch_first=True)
+
+        self.lstm.flatten_parameters()
+        outputs, _ = self.lstm(x)
+
+        outputs, _ = nn.util.rnn.pad_packed_sequence(
+            outputs, batch_first=True)
+
+        return outputs
+
+    def inference(self, x):
+        for conv in self.convolutions:
+            x = F.dropout(F.relu(conv(x)), 0.5, self.training)
+
+        x = x.transpose(1, 2)
+
+        self.lstm.flatten_parameters()
+        outputs, _ = self.lstm(x)
+
+        return outputs
+
+
+class WaveGlow(nn.Module):
+    def __init__(self, hparams):
         super(WaveGlow, self).__init__()
 
-        self.upsample = torch.nn.ConvTranspose1d(n_mel_channels,
-                                                 n_mel_channels,
-                                                 1024, stride=256)
-        assert(n_group % 2 == 0)
-        self.n_flows = n_flows
-        self.n_group = n_group
-        self.n_early_every = n_early_every
-        self.n_early_size = n_early_size
-        self.WN = torch.nn.ModuleList()
-        self.convinv = torch.nn.ModuleList()
+        self.upsample = nn.ConvTranspose1d(hparams.n_mel_channels,
+                                           hparams.n_mel_channels,
+                                           1024, stride=256)
+        assert(hparams.n_group % 2 == 0)
+        self.n_flows = hparams.n_flows
+        self.n_group = hparams.n_group
+        self.n_early_every = hparams.n_early_every
+        self.n_early_size = hparams.n_early_size
+        self.WN = nn.ModuleList()
+        self.convinv = nn.ModuleList()
 
-        n_half = int(n_group/2)
+        n_half = int(hparams.n_group/2)
 
         # Set up layers with the right sizes based on how many dimensions
         # have been output already
-        n_remaining_channels = n_group
-        for k in range(n_flows):
+        n_remaining_channels = hparams.n_group
+        for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
                 n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.WN.append(WN(n_half, n_mel_channels*n_group, **WN_config))
+            self.WN.append(WN(n_half, hparams.n_mel_channels*hparams.n_group, hparams.n_layers, hparams.n_channels, hparams.wn_kernel_size))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, forward_input):
@@ -295,7 +410,7 @@ class WaveGlow(torch.nn.Module):
     def remove_weightnorm(model):
         waveglow = model
         for WN in waveglow.WN:
-            WN.start = torch.nn.utils.remove_weight_norm(WN.start)
+            WN.start = nn.utils.remove_weight_norm(WN.start)
             WN.in_layers = remove(WN.in_layers)
             WN.cond_layers = remove(WN.cond_layers)
             WN.res_skip_layers = remove(WN.res_skip_layers)
@@ -303,8 +418,8 @@ class WaveGlow(torch.nn.Module):
 
 
 def remove(conv_list):
-    new_conv_list = torch.nn.ModuleList()
+    new_conv_list = nn.ModuleList()
     for old_conv in conv_list:
-        old_conv = torch.nn.utils.remove_weight_norm(old_conv)
+        old_conv = nn.utils.remove_weight_norm(old_conv)
         new_conv_list.append(old_conv)
     return new_conv_list

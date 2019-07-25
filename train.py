@@ -27,6 +27,7 @@
 import argparse
 import json
 import os
+import sys
 import torch
 
 #=====START: ADDED FOR DISTRIBUTED======
@@ -36,7 +37,12 @@ from torch.utils.data.distributed import DistributedSampler
 
 from torch.utils.data import DataLoader
 from glow import WaveGlow, WaveGlowLoss
-from mel2samp import Mel2Samp
+# from mel2samp import Mel2Samp
+from data_utils import TextMelLoader, TextMelCollate
+from hparams import create_hparams
+from utils import to_gpu
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -52,77 +58,92 @@ def load_checkpoint(checkpoint_path, model, optimizer):
 def save_checkpoint(model, optimizer, learning_rate, iteration, filepath):
     print("Saving model and optimizer state at iteration {} to {}".format(
           iteration, filepath))
-    model_for_saving = WaveGlow(**waveglow_config).cuda()
+    model_for_saving = WaveGlow(hparams).cuda()
     model_for_saving.load_state_dict(model.state_dict())
     torch.save({'model': model_for_saving,
                 'iteration': iteration,
                 'optimizer': optimizer.state_dict(),
                 'learning_rate': learning_rate}, filepath)
 
-def train(num_gpus, rank, group_name, output_directory, epochs, learning_rate,
-          sigma, iters_per_checkpoint, batch_size, seed, fp16_run,
-          checkpoint_path, with_tensorboard):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+def parse_batch(batch):
+    text_padded, input_lengths, mel_padded, gate_padded, output_lengths = batch
+    text_padded = to_gpu(text_padded).long()
+    input_lengths = to_gpu(input_lengths).long()
+    max_len = torch.max(input_lengths.data).item()
+    mel_padded = to_gpu(mel_padded).float()
+    output_lengths = to_gpu(output_lengths).long()
+
+    return text_padded, input_lengths, mel_padded, max_len, output_lengths
+
+def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams):
+    torch.manual_seed(hparams.seed)
+    torch.cuda.manual_seed(hparams.seed)
+    
     #=====START: ADDED FOR DISTRIBUTED======
     if num_gpus > 1:
         init_distributed(rank, num_gpus, group_name, **dist_config)
     #=====END:   ADDED FOR DISTRIBUTED======
 
-    criterion = WaveGlowLoss(sigma)
-    model = WaveGlow(**waveglow_config).cuda()
+    criterion = WaveGlowLoss(hparams.sigma)
+    model = WaveGlow(hparams).cuda()
 
     #=====START: ADDED FOR DISTRIBUTED======
     if num_gpus > 1:
         model = apply_gradient_allreduce(model)
     #=====END:   ADDED FOR DISTRIBUTED======
 
+    learning_rate = hparams.learning_rate
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    if fp16_run:
+    if hparams.fp16_run:
         from apex import amp
         model, optimizer = amp.initialize(model, optimizer, opt_level='O1')
 
     # Load checkpoint if one exists
     iteration = 0
-    if checkpoint_path != "":
-        model, optimizer, iteration = load_checkpoint(checkpoint_path, model,
-                                                      optimizer)
+    if checkpoint_path:
+        model, optimizer, iteration = load_checkpoint(checkpoint_path, model, optimizer)
         iteration += 1  # next iteration is iteration + 1
 
-    trainset = Mel2Samp(**data_config)
+    trainset = TextMelLoader(hparams.training_files, hparams)
+    collate_fn = TextMelCollate()
     # =====START: ADDED FOR DISTRIBUTED======
     train_sampler = DistributedSampler(trainset) if num_gpus > 1 else None
     # =====END:   ADDED FOR DISTRIBUTED======
+    batch_size = hparams.batch_size
     train_loader = DataLoader(trainset, num_workers=1, shuffle=False,
                               sampler=train_sampler,
                               batch_size=batch_size,
                               pin_memory=False,
-                              drop_last=True)
+                              drop_last=True, collate_fn=collate_fn)
 
-    # Get shared output_directory ready
+    # Get shared output_directory readya
+
     if rank == 0:
         if not os.path.isdir(output_directory):
             os.makedirs(output_directory)
             os.chmod(output_directory, 0o775)
         print("output directory", output_directory)
 
-    if with_tensorboard and rank == 0:
+    if hparams.with_tensorboard and rank == 0:
         from tensorboardX import SummaryWriter
         logger = SummaryWriter(os.path.join(output_directory, 'logs'))
 
     model.train()
     epoch_offset = max(0, int(iteration / len(train_loader)))
+    print ("Total Epochs: {}".format(hparams.epochs))
+    print ("Batch Size: {}".format(hparams.batch_size))
     # ================ MAIN TRAINNIG LOOP! ===================
-    for epoch in range(epoch_offset, epochs):
+    for epoch in range(epoch_offset, hparams.epochs):
         print("Epoch: {}".format(epoch))
         for i, batch in enumerate(train_loader):
             model.zero_grad()
 
-            mel, audio = batch
-            mel = torch.autograd.Variable(mel.cuda())
-            audio = torch.autograd.Variable(audio.cuda())
-            outputs = model((mel, audio))
+            text_padded, input_lengths, mel_padded, max_len, output_lengths = parse_batch(batch)
+            print (text_padded.shape)
+            print (mel_padded.shape)
+            sys.exit()
+            outputs = model((words, mel))
 
             loss = criterion(outputs)
             if num_gpus > 1:
@@ -130,7 +151,7 @@ def train(num_gpus, rank, group_name, output_directory, epochs, learning_rate,
             else:
                 reduced_loss = loss.item()
 
-            if fp16_run:
+            if hparams.fp16_run:
                 with amp.scale_loss(loss, optimizer) as scaled_loss:
                     scaled_loss.backward()
             else:
@@ -139,10 +160,10 @@ def train(num_gpus, rank, group_name, output_directory, epochs, learning_rate,
             optimizer.step()
 
             print("{}:\t{:.9f}".format(iteration, reduced_loss))
-            if with_tensorboard and rank == 0:
+            if hparams.with_tensorboard and rank == 0:
                 logger.add_scalar('training_loss', reduced_loss, i + len(train_loader) * epoch)
 
-            if (iteration % iters_per_checkpoint == 0):
+            if (iteration % hparams.iters_per_checkpoint == 0):
                 if rank == 0:
                     checkpoint_path = "{}/waveglow_{}".format(
                         output_directory, iteration)
@@ -153,16 +174,24 @@ def train(num_gpus, rank, group_name, output_directory, epochs, learning_rate,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-c', '--config', type=str,
-                        help='JSON file for configuration')
+    parser.add_argument('-o', '--output_directory', type=str, help='directory to save checkpoints')
+    parser.add_argument('-l', '--log_directory', type=str,
+                        help='directory to save tensorboard logs')
+    '''parser.add_argument('-c', '--config', type=str,
+                        help='JSON file for configuration')'''
+    parser.add_argument('-p', '--checkpoint_path', type=str, default=None,
+                        required=False, help='checkpoint path')
     parser.add_argument('-r', '--rank', type=int, default=0,
                         help='rank of process for distributed')
     parser.add_argument('-g', '--group_name', type=str, default='',
                         help='name of group for distributed')
+    parser.add_argument('--hparams', type=str,
+                        required=False, help='comma separated name=value pairs')
+    
     args = parser.parse_args()
 
     # Parse configs.  Globals nicer in this case
-    with open(args.config) as f:
+    '''with open(args.config) as f:
         data = f.read()
     config = json.loads(data)
     train_config = config["train_config"]
@@ -171,9 +200,11 @@ if __name__ == "__main__":
     global dist_config
     dist_config = config["dist_config"]
     global waveglow_config
-    waveglow_config = config["waveglow_config"]
+    waveglow_config = config["waveglow_config"]'''
 
-    num_gpus = torch.cuda.device_count()
+    hparams = create_hparams(args.hparams)
+
+    num_gpus = 1
     if num_gpus > 1:
         if args.group_name == '':
             print("WARNING: Multiple GPUs detected but no distributed group set")
@@ -185,4 +216,5 @@ if __name__ == "__main__":
 
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = False
-    train(num_gpus, args.rank, args.group_name, **train_config)
+    
+    train(num_gpus, args.rank, args.group_name, args.output_directory, args.checkpoint_path, hparams)
