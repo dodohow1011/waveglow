@@ -105,6 +105,8 @@ class Invertible1x1Conv(nn.Module):
             return z, log_det_W
 
 
+
+
 class WN(nn.Module):
     """
     This is the WaveNet like layer for the affine coupling.  The primary difference

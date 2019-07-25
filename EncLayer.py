@@ -1,6 +1,6 @@
 ''' Define the Layers '''
 import torch.nn as nn
-import Attention
+from Attention import MultiHeadAttention
 
 class PositionwiseFeedForward(nn.Module):
     ''' A two-feed-forward-layer module '''
