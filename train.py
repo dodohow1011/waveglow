@@ -42,7 +42,7 @@ from data_utils import TextMelLoader, TextMelCollate
 from hparams import create_hparams
 from utils import to_gpu
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -142,6 +142,10 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             text_padded, input_lengths, mel_padded, max_len, output_lengths = parse_batch(batch)
             print (text_padded.shape)
             print (mel_padded.shape)
+            print (input_lengths)
+            print (max_len)
+            print (output_lengths)
+            print (n_symbols)
             sys.exit()
             outputs = model((words, mel))
 
