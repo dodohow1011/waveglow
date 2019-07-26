@@ -41,20 +41,21 @@ def get_attn_key_pad_mask(seq_k, seq_q):
 class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
-    def __init__(self, hparams)
+    def __init__(self, d_model, n_position, n_symbols, emdedding_dim, n_head, d_hidden, d_k, d_v, n_layers, dropout=0.1)
 
         super(Encoder, self).__init__()
 
-        self.d_model = hparams.d_model
-        self.n_position = hparams.n_position
-        self.n_src_vocab = hparams.n_symbols
-        self.d_char_vec = hparams.symbols_embedding_dim
-        self.n_head = hparams.n_head
-        self.d_inner = hparams.d_hidden
-        self.d_k = hparams.d_k
-        self.d_v = hparams.d_v
-        self.n_layers = hparams.n_layers
-        self.dropout = hparams.dropout
+        self.d_model = d_model 
+        self.n_position = n_position
+        self.n_src_vocab = n_symbols # total num of word
+        self.d_char_vec = embedding_dim # character embedding
+        self.n_head = n_head
+        self.d_inner = d_hidden 
+        self.d_k = d_k # dimension of key
+        self.d_v = d_v # dimension of value
+        self.n_layers = n_layers 
+        self.dropout = dropout
+        self.d_output = 256
 
         self.src_word_emb = nn.Embedding(self.n_src_vocab, self.d_char_vec, padding_idx=0)
 
@@ -65,6 +66,8 @@ class Encoder(nn.Module):
         self.layer_stack = nn.ModuleList([
             EncoderLayer(self.d_model, self.d_inner, self.n_head, self.d_k, self.d_v, dropout=self.dropout)
             for _ in range(self.n_layers)])
+
+        self.linear = nn.Linear(self.d_char_vec, self.d_output)
 
     def forward(self, src_seq, src_pos, return_attns=False):
 
@@ -84,7 +87,8 @@ class Encoder(nn.Module):
                 slf_attn_mask=slf_attn_mask)
             if return_attns:
                 enc_slf_attn_list += [enc_slf_attn]
-
+        enc_output = self.linear(enc_output)
+        
         if return_attns:
             return enc_output, enc_slf_attn_list
         return enc_output,

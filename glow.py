@@ -119,10 +119,6 @@ class TF(nn.Module):
                 enc_output, non_pad_mask=non_pad_mask, dec_enc_attn_mask=dec_enc_attn_mask)
         return dec_output, dec_enc_attn
 
-
-
-
-
 class WaveGlow(nn.Module):
     def __init__(self, hparams):
         super(WaveGlow, self).__init__()
@@ -135,13 +131,25 @@ class WaveGlow(nn.Module):
         self.n_group = hparams.n_group
         self.n_early_every = hparams.n_early_every
         self.n_early_size = hparams.n_early_size
+
+        # model parameters
+        self.d_model = hparams.d_model
+        self.d_inner = hparams.d_hidden
+        self.n_position = hparams.n_position
+        self.n_symbols = hparams.n_symbols
+        self.emdedding_dim = hparams.symbol_embedding_dim
+        self.n_head = hparams.n_head
+        self.d_k = hparams.d_k
+        self.d_v = hparams.d_v
+        self.dropout = hparams.dropout
+        self.d_o = 256
         
         self.TF = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
-        self.encoder = Encoder
-        self.attention = ScaledDotProductAttention(tempperature=np.power(40 ,0.5))
+        self.encoder = Encoder(self.d_model, self.n_potion, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.dropout)
         n_half = int(hparams.n_group/2)
 
+        self.linear = nn.Linear(hparams.n_mel_channels, self.d_o)
         # Set up layers with the right sizes based on how many dimensions
         # have been output already
         n_remaining_channels = hparams.n_group
@@ -150,7 +158,7 @@ class WaveGlow(nn.Module):
                 n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.TF.append(TF(d_model=, d_inner=, n_head=, d_k=, d_v=, dropout=))
+            self.TF.append(TF(d_model=self.d_model, d_inner=self.d_inner, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words):
