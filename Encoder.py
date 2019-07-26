@@ -41,7 +41,7 @@ def get_attn_key_pad_mask(seq_k, seq_q):
 class Encoder(nn.Module):
     ''' A encoder model with self attention mechanism. '''
 
-    def __init__(self, d_model, n_position, n_symbols, emdedding_dim, n_head, d_hidden, d_k, d_v, n_layers, dropout=0.1)
+    def __init__(self, d_model, n_position, n_symbols, embedding_dim, n_head, d_hidden, d_k, d_v, n_layers, dropout=0.1):
 
         super(Encoder, self).__init__()
 
@@ -53,14 +53,14 @@ class Encoder(nn.Module):
         self.d_inner = d_hidden 
         self.d_k = d_k # dimension of key
         self.d_v = d_v # dimension of value
-        self.n_layers = n_layers 
+        self.n_layers = int(n_layers)
         self.dropout = dropout
         self.d_output = 256
 
         self.src_word_emb = nn.Embedding(self.n_src_vocab, self.d_char_vec, padding_idx=0)
 
         self.position_enc = nn.Embedding.from_pretrained(
-            get_sinusoid_encoding_table(self.n_position, self.d_char_vec, padding_idx=0),
+            position_encoding(self.n_position, self.d_char_vec, padding_idx=0),
             freeze=True)
 
         self.layer_stack = nn.ModuleList([

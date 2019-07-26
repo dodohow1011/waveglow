@@ -114,7 +114,7 @@ class TF(nn.Module):
         super(TF, self).__init__()
         self.decoder = DecoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
     
-    def forward(self, mel_0, enc_output, non_pad_mask=None, dec_enc_attn_mask=None)
+    def forward(self, mel_0, enc_output, non_pad_mask=None, dec_enc_attn_mask=None):
         dec_output, dec_attn_mask = self.decoder(mel_0, 
                 enc_output, non_pad_mask=non_pad_mask, dec_enc_attn_mask=dec_enc_attn_mask)
         return dec_output, dec_enc_attn
@@ -137,16 +137,17 @@ class WaveGlow(nn.Module):
         self.d_inner = hparams.d_hidden
         self.n_position = hparams.n_position
         self.n_symbols = hparams.n_symbols
-        self.emdedding_dim = hparams.symbol_embedding_dim
+        self.embedding_dim = hparams.symbols_embedding_dim
         self.n_head = hparams.n_head
         self.d_k = hparams.d_k
         self.d_v = hparams.d_v
+        self.n_layers = hparams.n_layers
         self.dropout = hparams.dropout
         self.d_o = 256
         
         self.TF = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
-        self.encoder = Encoder(self.d_model, self.n_potion, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.dropout)
+        self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.n_layers, self.dropout)
         n_half = int(hparams.n_group/2)
 
         self.linear = nn.Linear(hparams.n_mel_channels, self.d_o)

@@ -50,7 +50,7 @@ def create_hparams(hparams_string=None, verbose=False):
         symbols_embedding_dim=512,
 
         # Encoder parametersa
-        d_model=512
+        d_model=512,
         d_k=64,
         d_v=64,
         n_head=8,

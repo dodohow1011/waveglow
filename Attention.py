@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 
@@ -49,7 +50,7 @@ class MultiHeadAttention(nn.Module):
         self.layer_norm = nn.LayerNorm(d_model)
 
         self.fc = nn.Linear(n_head * d_v, d_model)
-        nn.init.xavier_normal_(self.fc.wright)
+        nn.init.xavier_normal_(self.fc.weight)
 
         self.dropout = nn.Dropout(dropout)
 

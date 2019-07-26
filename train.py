@@ -147,7 +147,7 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             print (input_lengths)
             print (max_len)
             print (output_lengths)
-            print (n_symbols)
+            print (hparams.n_symbols)
             sys.exit()
             outputs = model((words, mel))
 
