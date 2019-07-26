@@ -25,7 +25,7 @@ def position_encoding(n_position, d_hid, padding_idx=None):
 
 def get_non_pad_mask(seq):
     assert seq.dim() == 2
-    return seq.ne(Constants.PAD).type(torch.float).unsqueeze(-1)
+    return seq.ne(0).type(torch.float).unsqueeze(-1)
 
 
 def get_attn_key_pad_mask(seq_k, seq_q):
@@ -33,7 +33,7 @@ def get_attn_key_pad_mask(seq_k, seq_q):
 
     # Expand to fit the shape of key query attention matrix.
     len_q = seq_q.size(1)
-    padding_mask = seq_k.eq(Constants.PAD)
+    padding_mask = seq_k.eq(0)
     padding_mask = padding_mask.unsqueeze(1).expand(-1, len_q, -1)  # b x lq x lk
 
     return padding_mask
@@ -48,7 +48,7 @@ class Encoder(nn.Module):
         self.d_model = hparams.d_model
         self.n_position = hparams.n_position
         self.n_src_vocab = hparams.n_symbols
-        self.d_word_vec = hparams.symbols_embedding_dim
+        self.d_char_vec = hparams.symbols_embedding_dim
         self.n_head = hparams.n_head
         self.d_inner = hparams.d_hidden
         self.d_k = hparams.d_k
@@ -56,10 +56,10 @@ class Encoder(nn.Module):
         self.n_layers = hparams.n_layers
         self.dropout = hparams.dropout
 
-        self.src_word_emb = nn.Embedding(self.n_src_vocab, self.d_word_vec, padding_idx=Constants.PAD)
+        self.src_word_emb = nn.Embedding(self.n_src_vocab, self.d_char_vec, padding_idx=0)
 
         self.position_enc = nn.Embedding.from_pretrained(
-            get_sinusoid_encoding_table(self.n_position, self.d_word_vec, padding_idx=0),
+            get_sinusoid_encoding_table(self.n_position, self.d_char_vec, padding_idx=0),
             freeze=True)
 
         self.layer_stack = nn.ModuleList([

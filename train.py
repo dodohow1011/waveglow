@@ -140,6 +140,8 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             model.zero_grad()
 
             text_padded, input_lengths, mel_padded, max_len, output_lengths = parse_batch(batch)
+            src_pos = torch.arange(hparams.n_position)
+            src_pos = to_gpu(src_pos).long()
             print (text_padded.shape)
             print (mel_padded.shape)
             print (input_lengths)
