@@ -31,6 +31,7 @@ from torch.autograd import Variable
 from layers import ConvNorm
 from Encoder import Encoder
 from Attention import ScaledDotProductAttention
+from DecLayer import DecoderLayer
 import torch.nn.functional as F
 import sys
 
@@ -106,6 +107,22 @@ class Invertible1x1Conv(nn.Module):
             z = self.conv(z)
             return z, log_det_W
 
+
+
+class TF(nn.Module):
+    def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
+        super(TF, self).__init__()
+        self.decoder = DecoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
+    
+    def forward(self, mel_0, enc_output, non_pad_mask=None, dec_enc_attn_mask=None)
+        dec_output, dec_attn_mask = self.decoder(mel_0, 
+                enc_output, non_pad_mask=non_pad_mask, dec_enc_attn_mask=dec_enc_attn_mask)
+        return dec_output, dec_enc_attn
+
+
+
+
+
 class WaveGlow(nn.Module):
     def __init__(self, hparams):
         super(WaveGlow, self).__init__()
@@ -119,6 +136,7 @@ class WaveGlow(nn.Module):
         self.n_early_every = hparams.n_early_every
         self.n_early_size = hparams.n_early_size
         
+        self.TF = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
         self.encoder = Encoder
         self.attention = ScaledDotProductAttention(tempperature=np.power(40 ,0.5))
@@ -132,6 +150,7 @@ class WaveGlow(nn.Module):
                 n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
+            self.TF.append(TF(d_model=, d_inner=, n_head=, d_k=, d_v=, dropout=))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words):
@@ -139,6 +158,8 @@ class WaveGlow(nn.Module):
         output_mel = []
         log_s_list = []
         log_det_W_list = []
+
+        enc_output = Encoder(words)
 
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
@@ -152,6 +173,8 @@ class WaveGlow(nn.Module):
             mel_0 = mel[:,:n_half,:]
             mel_1 = mel[:,n_half:,:]
 
+
+            output, dec_enc_attn = self.TF[k]((mel_0, enc_output))
             log_s = output[:, n_half:, :]
             t = output[:, :n_half, :]
             mel_1 = torch.exp(log_s)*mel_1 + t
