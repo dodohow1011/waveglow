@@ -51,6 +51,7 @@ def create_hparams(hparams_string=None, verbose=False):
 
         # Encoder parametersa
         d_model=512,
+        d_o = 256
         d_k=64,
         d_v=64,
         n_head=8,
@@ -97,8 +98,8 @@ def create_hparams(hparams_string=None, verbose=False):
         sigma=1.0,
         n_flows=12,
         n_group=8,
-        n_early_every=4,
-        n_early_size=2
+        n_early_every=5,
+        n_early_size=20
 
     )
 

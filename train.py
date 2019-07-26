@@ -42,7 +42,7 @@ from data_utils import TextMelLoader, TextMelCollate
 from hparams import create_hparams
 from utils import to_gpu
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
