@@ -46,6 +46,11 @@ def fused_add_tanh_sigmoid_multiply(input_a, input_b, n_channels):
     return acts
 
 
+def is_end_of_frames(mel, eps=0.2):
+    return (output.data <= eps).all()
+
+
+
 class WaveGlowLoss(nn.Module):
     def __init__(self, sigma=1.0):
         super(WaveGlowLoss, self).__init__()
@@ -110,13 +115,15 @@ class Invertible1x1Conv(nn.Module):
 
 
 class TF(nn.Module):
-    def __init__(self, d_model, d_inner, n_head, d_k, d_v, dropout=0.1):
+    def __init__(self, d_model, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
         super(TF, self).__init__()
+        self.linear = nn.Linear(d_mel_half, d_model)  # 40 * 80
         self.decoder = DecoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
     
-    def forward(self, mel_0, enc_output, non_pad_mask=None, dec_enc_attn_mask=None):
-        dec_output, dec_attn_mask = self.decoder(mel_0, 
-                enc_output, non_pad_mask=non_pad_mask, dec_enc_attn_mask=dec_enc_attn_mask)
+    def forward(self, mel_0, enc_output):
+        
+        mel_0 = self.linear(mel_0) # 40 -> 256
+        dec_output, dec_enc_attn = self.decoder(mel_0, enc_output)
         return dec_output, dec_enc_attn
 
 class WaveGlow(nn.Module):
@@ -143,23 +150,23 @@ class WaveGlow(nn.Module):
         self.d_v = hparams.d_v
         self.n_layers = hparams.n_layers
         self.dropout = hparams.dropout
-        self.d_o = 256
+        self.d_o = hparams.d_o   
+        self.max_mel_steps = 1000
         
         self.TF = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
         self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.n_layers, self.dropout)
         n_half = int(hparams.n_group/2)
 
-        self.linear = nn.Linear(hparams.n_mel_channels, self.d_o)
         # Set up layers with the right sizes based on how many dimensions
         # have been output already
-        n_remaining_channels = hparams.n_group
+        n_remaining_channels = hparams.n_mel_channels
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
                 n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.TF.append(TF(d_model=self.d_model, d_inner=self.d_inner, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
+            self.TF.append(TF(d_model=self.d_o, d_inner=self.d_inner, d_mel_half = n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words):
@@ -194,48 +201,36 @@ class WaveGlow(nn.Module):
         output_audio.append(audio)
         return torch.cat(output_audio,1), log_s_list, log_det_W_list
 
-    def infer(self, spect, sigma=1.0):
-        spect = self.upsample(spect)
-        # trim conv artifacts. maybe pad spec to kernel multiple
-        time_cutoff = self.upsample.kernel_size[0] - self.upsample.stride[0]
-        spect = spect[:, :, :-time_cutoff]
+    def infer(self, words, sigma=1.0):
 
-        spect = spect.unfold(2, self.n_group, self.n_group).permute(0, 2, 1, 3)
-        spect = spect.contiguous().view(spect.size(0), spect.size(1), -1).permute(0, 2, 1)
+        enc_output = Encoder(words) # b * d_enc * t
 
-        if spect.type() == 'torch.cuda.HalfTensor':
-            audio = torch.cuda.HalfTensor(spect.size(0),
-                                          self.n_remaining_channels,
-                                          spect.size(2)).normal_()
-        else:
-            audio = torch.cuda.FloatTensor(spect.size(0),
-                                           self.n_remaining_channels,
-                                           spect.size(2)).normal_()
-
-        audio = torch.autograd.Variable(sigma*audio)
+        mel = torch.cuda.FloatTensor(enc_output.size(0), self.n_remaining_channels, self.max_mel_steps).normal_()
+        mel = torch.autograd.Variable(sigma*mel)
 
         for k in reversed(range(self.n_flows)):
             n_half = int(audio.size(1)/2)
-            audio_0 = audio[:,:n_half,:]
-            audio_1 = audio[:,n_half:,:]
+            mel_0 = mel[:,:n_half,:]
+            mel_1 = mel[:,n_half:,:]
 
-            output = self.WN[k]((audio_0, spect))
+            output = self.TF[k]((mel_0, enc_output))
             s = output[:, n_half:, :]
             b = output[:, :n_half, :]
-            audio_1 = (audio_1 - b)/torch.exp(s)
-            audio = torch.cat([audio_0, audio_1],1)
+            mel_1 = (mel_1 - b)/torch.exp(s)
+            mel = torch.cat([mel_0, mel_1],1)
 
-            audio = self.convinv[k](audio, reverse=True)
+            mel = self.convinv[k](mel, reverse=True)
 
             if k % self.n_early_every == 0 and k > 0:
-                if spect.type() == 'torch.cuda.HalfTensor':
-                    z = torch.cuda.HalfTensor(spect.size(0), self.n_early_size, spect.size(2)).normal_()
-                else:
-                    z = torch.cuda.FloatTensor(spect.size(0), self.n_early_size, spect.size(2)).normal_()
-                audio = torch.cat((sigma*z, audio),1)
+                z = torch.cuda.FloatTensor(enc_output.size(0), self.n_early_size, max_mel_steps).normal_()
+                mel = torch.cat((sigma*z, mel),1)
+        
+        for t in mel.size(2):
+            if t > 1 and is_end_of_frames(mel[:, :, t]):
+                mel = mel[:, :, :t+1]   # get the end of mel
 
-        audio = audio.permute(0,2,1).contiguous().view(audio.size(0), -1).data
-        return audio
+        mel = mel.permute(0,2,1).data # b * t * d_mel
+        return mel
 
     @staticmethod
     def remove_weightnorm(model):
