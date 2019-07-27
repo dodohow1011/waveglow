@@ -10,6 +10,7 @@ def create_hparams(hparams_string=None, verbose=False):
         # Experiment Parameters        #
         ################################
         epochs=500,
+        batch_size=16,
         iters_per_checkpoint=1000,
         seed=1234,
         dynamic_loss_scaling=True,
@@ -23,11 +24,10 @@ def create_hparams(hparams_string=None, verbose=False):
         ignore_layers=['embedding.weight'],
 
         ################################
-        # Data Parameters             #
+        # Data Parameters              #
         ################################
         load_mel_from_disk=False,
-        training_files='filelists/ljs_audio_text_train_filelist.txt',
-        validation_files='filelists/ljs_audio_text_val_filelist.txt',
+        training_files='metadata.txt',
         text_cleaners=['english_cleaners'],
 
         ################################
@@ -46,12 +46,12 @@ def create_hparams(hparams_string=None, verbose=False):
         # Model Parameters             #
         ################################
         n_symbols=len(symbols),
-        n_position = 200,
+        n_position=200,
         symbols_embedding_dim=512,
 
         # Encoder parametersa
         d_model=512,
-        d_o = 256
+        d_o=256
         d_k=64,
         d_v=64,
         n_head=8,
@@ -63,10 +63,6 @@ def create_hparams(hparams_string=None, verbose=False):
         # Attention parameters
         attention_rnn_dim=1024,
         attention_dim=128,
-
-        # Location Layer parameters
-        attention_location_n_filters=32,
-        attention_location_kernel_size=31,
 
         # Mel-post processing network parameters
         postnet_embedding_dim=512,
@@ -84,17 +80,13 @@ def create_hparams(hparams_string=None, verbose=False):
         lr_decay_step=25000,
         
         ################################
-        ####### Schedule Sampling ######
+        # Training Parameters          #
         ################################
-        tf_decay_rate=1.0,
-        start_tf=0,
-
         weight_decay=1e-6,
         grad_clip_thresh=1.0,
-        batch_size=16,
         mask_padding=True,  # set model's padded outputs to padded values
     
-        # WaveGlow parametersa
+        # WaveGlow parameters
         sigma=1.0,
         n_flows=12,
         n_group=8,

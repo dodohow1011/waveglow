@@ -114,7 +114,7 @@ class Invertible1x1Conv(nn.Module):
 
 
 
-class TF(nn.Module):
+class Decoder(nn.Module):
     def __init__(self, d_model, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
         super(TF, self).__init__()
         self.linear = nn.Linear(d_mel_half, d_model)  # 40 * 80
@@ -153,7 +153,7 @@ class WaveGlow(nn.Module):
         self.d_o = hparams.d_o   
         self.max_mel_steps = 1000
         
-        self.TF = torch.nn.ModuleList()
+        self.decoder = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
         self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.n_layers, self.dropout)
         n_half = int(hparams.n_group/2)
@@ -166,7 +166,7 @@ class WaveGlow(nn.Module):
                 n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.TF.append(TF(d_model=self.d_o, d_inner=self.d_inner, d_mel_half = n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
+            self.decoder.append(Decoder(d_model=self.d_o, d_inner=self.d_inner, d_mel_half = n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words):
@@ -190,7 +190,7 @@ class WaveGlow(nn.Module):
             mel_1 = mel[:,n_half:,:]
 
 
-            output, dec_enc_attn = self.TF[k]((mel_0, enc_output))
+            output, dec_enc_attn = self.decoder[k]((mel_0, enc_output))
             log_s = output[:, n_half:, :]
             t = output[:, :n_half, :]
             mel_1 = torch.exp(log_s)*mel_1 + t
