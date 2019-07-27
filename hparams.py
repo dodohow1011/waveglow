@@ -48,8 +48,10 @@ def create_hparams(hparams_string=None, verbose=False):
         n_symbols=len(symbols),
         n_position=200,
         symbols_embedding_dim=512,
-
-        # Encoder parametersa
+        
+        ################################
+        # Encoder Decoder              #
+        ################################
         d_model=512,
         d_o=256,
         d_k=64,
@@ -60,10 +62,6 @@ def create_hparams(hparams_string=None, verbose=False):
 
         dropout=0.1,
         
-        # Attention parameters
-        attention_rnn_dim=1024,
-        attention_dim=128,
-
         # Mel-post processing network parameters
         postnet_embedding_dim=512,
         postnet_kernel_size=5,
@@ -85,8 +83,10 @@ def create_hparams(hparams_string=None, verbose=False):
         weight_decay=1e-6,
         grad_clip_thresh=1.0,
         mask_padding=True,  # set model's padded outputs to padded values
-    
-        # WaveGlow parameters
+        
+        ################################
+        # WaveGlow parameters          #
+        ################################
         sigma=1.0,
         n_flows=12,
         n_group=8,

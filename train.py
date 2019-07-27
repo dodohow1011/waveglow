@@ -42,7 +42,7 @@ from data_utils import TextMelLoader, TextMelCollate
 from hparams import create_hparams
 from utils import to_gpu
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -111,7 +111,7 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
     train_sampler = DistributedSampler(trainset) if num_gpus > 1 else None
     # =====END:   ADDED FOR DISTRIBUTED======
     batch_size = hparams.batch_size
-    train_loader = DataLoader(trainset, num_workers=0, shuffle=False,
+    train_loader = DataLoader(trainset, num_workers=1, shuffle=False,
                               sampler=train_sampler,
                               batch_size=batch_size,
                               pin_memory=False,
@@ -142,15 +142,15 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             text_padded, input_lengths, mel_padded, max_len, output_lengths = parse_batch(batch)
             src_pos = torch.arange(hparams.n_position)
             src_pos = to_gpu(src_pos).long()
-            print (text_padded.shape)
+            '''print (text_padded.shape)
             print (mel_padded.shape)
             print (input_lengths)
             print (max_len)
             print (output_lengths)
             print (hparams.n_symbols)
             print (src_pos)
-            sys.exit()
-            outputs = model(mel, words, src_pos)
+            sys.exit()'''
+            outputs = model(mel_padded, text_padded, src_pos)
 
             loss = criterion(outputs)
             if num_gpus > 1:
@@ -196,19 +196,6 @@ if __name__ == "__main__":
                         required=False, help='comma separated name=value pairs')
     
     args = parser.parse_args()
-
-    # Parse configs.  Globals nicer in this case
-    '''with open(args.config) as f:
-        data = f.read()
-    config = json.loads(data)
-    train_config = config["train_config"]
-    global data_config
-    data_config = config["data_config"]
-    global dist_config
-    dist_config = config["dist_config"]
-    global waveglow_config
-    waveglow_config = config["waveglow_config"]'''
-
     hparams = create_hparams(args.hparams)
 
     num_gpus = 1

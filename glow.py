@@ -115,10 +115,10 @@ class Invertible1x1Conv(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, d_model, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
+    def __init__(self, d_o, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
         super(Decoder, self).__init__()
-        self.linear = nn.Linear(d_mel_half, d_model)  # 40 * 80
-        self.decoder = DecoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
+        self.linear = nn.Linear(d_mel_half, d_o)  # 40 -> 256
+        self.decoder = DecoderLayer(d_o, d_inner, n_head, d_k, d_v, dropout=dropout)
     
     def forward(self, mel_0, enc_output):
         
@@ -140,33 +140,31 @@ class WaveGlow(nn.Module):
         self.n_early_size = hparams.n_early_size
 
         # model parameters
-        self.d_model = hparams.d_model
+        self.d_model = hparams.d_model                        # 512
         self.d_inner = hparams.d_hidden
-        self.n_position = hparams.n_position
-        self.n_symbols = hparams.n_symbols
-        self.embedding_dim = hparams.symbols_embedding_dim
+        self.n_position = hparams.n_position                  # 200
+        self.n_symbols = hparams.n_symbols                    
+        self.embedding_dim = hparams.symbols_embedding_dim    # 512
         self.n_head = hparams.n_head
-        self.d_k = hparams.d_k
-        self.d_v = hparams.d_v
+        self.d_k = hparams.d_k                                # 64
+        self.d_v = hparams.d_v                                # 64
         self.n_layers = hparams.n_layers
         self.dropout = hparams.dropout
-        self.d_o = hparams.d_o   
+        self.d_o = hparams.d_o                                # 256
         self.max_mel_steps = 1000
         
         self.decoder = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
         self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.n_layers, self.dropout)
-        n_half = int(hparams.n_group/2)
 
         # Set up layers with the right sizes based on how many dimensions
         # have been output already
         n_remaining_channels = hparams.n_mel_channels
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
-                n_half = n_half - int(self.n_early_size/2)
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.decoder.append(Decoder(d_model=self.d_o, d_inner=self.d_inner, d_mel_half = n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
+            self.decoder.append(Decoder(d_o=self.d_o, d_inner=self.d_inner, d_mel_half =n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words, src_pos):
@@ -178,7 +176,7 @@ class WaveGlow(nn.Module):
         log_s_list = []
         log_det_W_list = []
 
-        enc_output = Encoder(words, src_pos)
+        enc_output = self.encoder(words, src_pos)
 
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
@@ -199,10 +197,10 @@ class WaveGlow(nn.Module):
             mel_1 = torch.exp(log_s)*mel_1 + t
             log_s_list.append(log_s)
 
-            audio = torch.cat([audio_0, audio_1],1)
+            mel = torch.cat([mel_0, mel_1],1)
 
-        output_audio.append(audio)
-        return torch.cat(output_audio,1), log_s_list, log_det_W_list
+        output_mel.append(mel)
+        return torch.cat(output_mel,1), log_s_list, log_det_W_list
 
     def infer(self, words, sigma=1.0):
 

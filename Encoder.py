@@ -47,7 +47,7 @@ class Encoder(nn.Module):
 
         self.d_model = d_model 
         self.n_position = n_position
-        self.n_src_vocab = n_symbols # total num of word
+        self.n_symbols = n_symbols # total num of word
         self.d_char_vec = embedding_dim # character embedding
         self.n_head = n_head
         self.d_inner = d_hidden 
@@ -57,7 +57,7 @@ class Encoder(nn.Module):
         self.dropout = dropout
         self.d_output = 256
 
-        self.src_word_emb = nn.Embedding(self.n_src_vocab, self.d_char_vec, padding_idx=0)
+        self.src_word_emb = nn.Embedding(self.n_symbols, self.d_char_vec, padding_idx=0)
 
         self.position_enc = nn.Embedding.from_pretrained(
             position_encoding(self.n_position, self.d_char_vec, padding_idx=0),
