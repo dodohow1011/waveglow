@@ -53,7 +53,7 @@ class Encoder(nn.Module):
         self.d_inner = d_hidden 
         self.d_k = d_k # dimension of key
         self.d_v = d_v # dimension of value
-        self.n_layers = int(n_layers)
+        self.n_layers = n_layers
         self.dropout = dropout
         self.d_output = 256
 

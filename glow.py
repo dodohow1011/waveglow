@@ -159,7 +159,7 @@ class WaveGlow(nn.Module):
         
         self.decoder = torch.nn.ModuleList()
         self.convinv = nn.ModuleList()
-        self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_k, self.d_v, self.n_layers, self.dropout)
+        self.encoder = Encoder(self.d_model, self.n_position, self.n_symbols, self.embedding_dim, self.n_head, self.d_inner, self.d_k, self.d_v, self.n_layers, self.dropout)
 
         # Set up layers with the right sizes based on how many dimensions
         # have been output already
@@ -179,7 +179,7 @@ class WaveGlow(nn.Module):
         log_s_list = []
         log_det_W_list = []
 
-        enc_output = self.encoder(words, src_pos)
+        enc_output, enc_slf_attn_list = self.encoder(words, src_pos, return_attns=True)
 
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
@@ -203,7 +203,7 @@ class WaveGlow(nn.Module):
             mel = torch.cat([mel_0, mel_1], 1)
 
         output_mel.append(mel)
-        return torch.cat(output_mel, 1), log_s_list, log_det_W_list
+        return torch.cat(output_mel, 1), log_s_list, log_det_W_list, enc_slf_attn_list[-1], dec_enc_attn
 
     def infer(self, words, sigma=1.0):
 

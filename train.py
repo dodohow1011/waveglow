@@ -41,8 +41,9 @@ from glow import WaveGlow, WaveGlowLoss
 from data_utils import TextMelLoader, TextMelCollate
 from hparams import create_hparams
 from utils import to_gpu
+from logger import waveglowLogger
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+#os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -75,10 +76,19 @@ def parse_batch(batch):
 
     return text_padded, input_lengths, mel_padded, max_len, output_lengths
 
-def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams):
+def prepare_directories_and_logger(output_directory, log_directory):
+    if not os.path.isdir(output_directory):
+        os.makedirs(output_directory)
+        os.chmod(output_directory, 0o775)
+    logger = waveglowLogger(os.path.join(output_directory, log_directory))
+    
+    return logger
+
+
+def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoint_path, hparams):
     torch.manual_seed(hparams.seed)
     torch.cuda.manual_seed(hparams.seed)
-    
+
     #=====START: ADDED FOR DISTRIBUTED======
     if num_gpus > 1:
         init_distributed(rank, num_gpus, group_name, **dist_config)
@@ -126,8 +136,7 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
         print("output directory", output_directory)
 
     if hparams.with_tensorboard and rank == 0:
-        from tensorboardX import SummaryWriter
-        logger = SummaryWriter(os.path.join(output_directory, 'logs'))
+        logger = prepare_directories_and_logger(output_directory, log_directory)
 
     model.train()
     epoch_offset = max(0, int(iteration / len(train_loader)))
@@ -151,8 +160,8 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             print (hparams.n_symbols)
             print (src_pos)
             sys.exit()'''
-            outputs = model(mel_padded, text_padded, src_pos)
-
+            z, log_s_list, log_det_w_list, enc_slf_attn, dec_enc_attn = model(mel_padded, text_padded, src_pos)
+            outputs = (z, log_s_list, log_det_w_list)
             loss = criterion(outputs)
             if num_gpus > 1:
                 reduced_loss = reduce_tensor(loss.data, num_gpus).item()
@@ -165,14 +174,17 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             else:
                 loss.backward()
 
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), hparams.grad_clip_thresh)
+
             optimizer.step()
 
             print("{}:\t{:.9f}".format(iteration, reduced_loss))
             if hparams.with_tensorboard and rank == 0:
-                logger.add_scalar('training_loss', reduced_loss, i + len(train_loader) * epoch)
+                logger.log_training(reduced_loss, grad_norm, learning_rate, iteration)
 
             if (iteration % hparams.iters_per_checkpoint == 0):
                 if rank == 0:
+                    logger.log_alignment(model, enc_slf_attn, dec_enc_attn, iteration)
                     checkpoint_path = "{}/waveglow_{}".format(
                         output_directory, iteration)
                     save_checkpoint(model, optimizer, learning_rate, iteration,
@@ -212,4 +224,4 @@ if __name__ == "__main__":
     torch.backends.cudnn.enabled = True
     torch.backends.cudnn.benchmark = False
     
-    train(num_gpus, args.rank, args.group_name, args.output_directory, args.checkpoint_path, hparams)
+    train(num_gpus, args.rank, args.group_name, args.output_directory, args.log_directory, args.checkpoint_path, hparams)
