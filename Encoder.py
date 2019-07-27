@@ -79,9 +79,6 @@ class Encoder(nn.Module):
 
         # -- Forward
         max_length = src_seq.size(1)
-        print (max_length)
-        print (src_seq.size())
-        print (src_pos.size())
         enc_output = self.src_word_emb(src_seq) + self.position_enc(src_pos)[:, :max_length]
 
         for enc_layer in self.layer_stack:
