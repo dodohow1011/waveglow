@@ -78,7 +78,11 @@ class Encoder(nn.Module):
         non_pad_mask = get_non_pad_mask(src_seq)
 
         # -- Forward
-        enc_output = self.src_word_emb(src_seq) + self.position_enc(src_pos)
+        max_length = src_seq.size(1)
+        print (max_length)
+        print (src_seq.size())
+        print (src_pos.size())
+        enc_output = self.src_word_emb(src_seq) + self.position_enc(src_pos)[:, :max_length]
 
         for enc_layer in self.layer_stack:
             enc_output, enc_slf_attn = enc_layer(
@@ -91,4 +95,4 @@ class Encoder(nn.Module):
         
         if return_attns:
             return enc_output, enc_slf_attn_list
-        return enc_output,
+        return enc_output

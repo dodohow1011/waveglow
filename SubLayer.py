@@ -1,5 +1,6 @@
 ''' Define the Layers '''
 import torch.nn as nn
+import torch.nn.functional as F
 from Attention import MultiHeadAttention
 
 class PositionwiseFeedForward(nn.Module):
@@ -49,7 +50,7 @@ class DecoderLayer(nn.Module):
 
     def forward(self, dec_input, enc_output):
 
-        dec_output, dec_enc_attn = self.enc_attn(dec_output, enc_output, enc_output)
+        dec_output, dec_enc_attn = self.enc_attn(dec_input, enc_output, enc_output)
         dec_output = self.pos_ffn(dec_output)
         
         return dec_output, dec_enc_attn

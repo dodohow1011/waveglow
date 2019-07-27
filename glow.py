@@ -119,11 +119,15 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.linear = nn.Linear(d_mel_half, d_o)  # 40 -> 256
         self.decoder = DecoderLayer(d_o, d_inner, n_head, d_k, d_v, dropout=dropout)
+        self.output = nn.Linear(d_o, 2*d_mel_half)
     
     def forward(self, mel_0, enc_output):
         
+        mel_0 = mel_0.transpose(1, 2)
         mel_0 = self.linear(mel_0) # 40 -> 256
         dec_output, dec_enc_attn = self.decoder(mel_0, enc_output)
+        dec_output = self.output(dec_output)
+        dec_output = dec_output.transpose(1 ,2)
         return dec_output, dec_enc_attn
 
 class WaveGlow(nn.Module):
@@ -168,7 +172,6 @@ class WaveGlow(nn.Module):
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words, src_pos):
-
         # mel: B x D x T
         # words: B x T
 
@@ -191,16 +194,16 @@ class WaveGlow(nn.Module):
             mel_1 = mel[:,n_half:,:]
 
 
-            output, dec_enc_attn = self.decoder[k]((mel_0, enc_output))
+            output, dec_enc_attn = self.decoder[k](mel_0, enc_output)
             log_s = output[:, n_half:, :]
             t = output[:, :n_half, :]
             mel_1 = torch.exp(log_s)*mel_1 + t
             log_s_list.append(log_s)
 
-            mel = torch.cat([mel_0, mel_1],1)
+            mel = torch.cat([mel_0, mel_1], 1)
 
         output_mel.append(mel)
-        return torch.cat(output_mel,1), log_s_list, log_det_W_list
+        return torch.cat(output_mel, 1), log_s_list, log_det_W_list
 
     def infer(self, words, sigma=1.0):
 

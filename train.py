@@ -111,7 +111,7 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
     train_sampler = DistributedSampler(trainset) if num_gpus > 1 else None
     # =====END:   ADDED FOR DISTRIBUTED======
     batch_size = hparams.batch_size
-    train_loader = DataLoader(trainset, num_workers=1, shuffle=False,
+    train_loader = DataLoader(trainset, num_workers=0, shuffle=False,
                               sampler=train_sampler,
                               batch_size=batch_size,
                               pin_memory=False,
@@ -140,11 +140,11 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             model.zero_grad()
 
             text_padded, input_lengths, mel_padded, max_len, output_lengths = parse_batch(batch)
+            # mel_padded = mel_padded.transpose(1, 2)
             src_pos = torch.arange(hparams.n_position)
-            src_pos = to_gpu(src_pos).long()
-            '''print (text_padded.shape)
-            print (mel_padded.shape)
-            print (input_lengths)
+            src_pos = to_gpu(src_pos).long().unsqueeze(0)
+            src_pos.expand(hparams.batch_size, -1)
+            '''print (input_lengths)
             print (max_len)
             print (output_lengths)
             print (hparams.n_symbols)
