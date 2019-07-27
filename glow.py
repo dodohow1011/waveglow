@@ -31,7 +31,7 @@ from torch.autograd import Variable
 from layers import ConvNorm
 from Encoder import Encoder
 from Attention import ScaledDotProductAttention
-from DecLayer import DecoderLayer
+from SubLayer import DecoderLayer
 import torch.nn.functional as F
 import sys
 

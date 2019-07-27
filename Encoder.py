@@ -2,7 +2,7 @@ import sys
 import torch
 import torch.nn as nn
 import numpy as np
-from EncLayer import EncoderLayer
+from SubLayer import EncoderLayer
 
 def position_encoding(n_position, d_hid, padding_idx=None):
     
