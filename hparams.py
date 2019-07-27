@@ -10,7 +10,7 @@ def create_hparams(hparams_string=None, verbose=False):
         # Experiment Parameters        #
         ################################
         epochs=500,
-        batch_size=16,
+        batch_size=1,
         iters_per_checkpoint=1000,
         seed=1234,
         dynamic_loss_scaling=True,
@@ -51,7 +51,7 @@ def create_hparams(hparams_string=None, verbose=False):
 
         # Encoder parametersa
         d_model=512,
-        d_o=256
+        d_o=256,
         d_k=64,
         d_v=64,
         n_head=8,

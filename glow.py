@@ -116,7 +116,7 @@ class Invertible1x1Conv(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, d_model, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
-        super(TF, self).__init__()
+        super(Decoder, self).__init__()
         self.linear = nn.Linear(d_mel_half, d_model)  # 40 * 80
         self.decoder = DecoderLayer(d_model, d_inner, n_head, d_k, d_v, dropout=dropout)
     
@@ -169,13 +169,16 @@ class WaveGlow(nn.Module):
             self.decoder.append(Decoder(d_model=self.d_o, d_inner=self.d_inner, d_mel_half = n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
-    def forward(self, mel, words):
+    def forward(self, mel, words, src_pos):
+
+        # mel: B x D x T
+        # words: B x T
 
         output_mel = []
         log_s_list = []
         log_det_W_list = []
 
-        enc_output = Encoder(words)
+        enc_output = Encoder(words, src_pos)
 
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:

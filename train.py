@@ -42,7 +42,7 @@ from data_utils import TextMelLoader, TextMelCollate
 from hparams import create_hparams
 from utils import to_gpu
 
-#os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 def load_checkpoint(checkpoint_path, model, optimizer):
     assert os.path.isfile(checkpoint_path)
@@ -111,7 +111,7 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
     train_sampler = DistributedSampler(trainset) if num_gpus > 1 else None
     # =====END:   ADDED FOR DISTRIBUTED======
     batch_size = hparams.batch_size
-    train_loader = DataLoader(trainset, num_workers=1, shuffle=False,
+    train_loader = DataLoader(trainset, num_workers=0, shuffle=False,
                               sampler=train_sampler,
                               batch_size=batch_size,
                               pin_memory=False,
@@ -148,8 +148,9 @@ def train(num_gpus, rank, group_name, output_directory, checkpoint_path, hparams
             print (max_len)
             print (output_lengths)
             print (hparams.n_symbols)
+            print (src_pos)
             sys.exit()
-            outputs = model((words, mel))
+            outputs = model(mel, words, src_pos)
 
             loss = criterion(outputs)
             if num_gpus > 1:
