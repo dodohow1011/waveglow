@@ -67,7 +67,7 @@ class Encoder(nn.Module):
             EncoderLayer(self.d_model, self.d_inner, self.n_head, self.d_k, self.d_v, dropout=self.dropout)
             for _ in range(self.n_layers)])
 
-        self.linear = nn.Linear(self.d_char_vec, self.d_output)
+        #self.linear = nn.Linear(self.d_char_vec, self.d_output)
 
     def forward(self, src_seq, src_pos, return_attns=False):
 
@@ -88,8 +88,8 @@ class Encoder(nn.Module):
                 slf_attn_mask=slf_attn_mask)
             if return_attns:
                 enc_slf_attn_list += [enc_slf_attn]
-        enc_output = self.linear(enc_output)
+        #enc_output = self.linear(enc_output)
         
         if return_attns:
-            return enc_output, enc_slf_attn_list
+            return enc_output, enc_slf_attn_list[-1]
         return enc_output

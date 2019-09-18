@@ -31,7 +31,7 @@ from torch.autograd import Variable
 from layers import ConvNorm
 from Encoder import Encoder
 from Attention import ScaledDotProductAttention
-from SubLayer import DecoderLayer
+from SubLayer import DecoderLayer, position_encoding
 import torch.nn.functional as F
 import sys
 
@@ -56,8 +56,8 @@ class WaveGlowLoss(nn.Module):
         super(WaveGlowLoss, self).__init__()
         self.sigma = sigma
 
-    def forward(self, model_output):
-        z, log_s_list, log_det_W_list = model_output
+    def forward(self, model_output, target, iteration):
+        z, log_s_list, log_det_W_list, out_mel = model_output
         for i, log_s in enumerate(log_s_list):
             if i == 0:
                 log_s_total = torch.sum(log_s)
@@ -66,8 +66,12 @@ class WaveGlowLoss(nn.Module):
                 log_s_total = log_s_total + torch.sum(log_s)
                 log_det_W_total += log_det_W_list[i]
 
+        mel_loss = nn.MSELoss()(out_mel, target)
+        n = z.size(0)*z.size(1)*z.size(2)
+        print("{:.5f}, {:.5f}, {:.5f}, {:.7f}".format(torch.sum(z*z)/(2*self.sigma*self.sigma*n), log_s_total/n, log_det_W_total/n, mel_loss*900))
         loss = torch.sum(z*z)/(2*self.sigma*self.sigma) - log_s_total - log_det_W_total
-        return loss/(z.size(0)*z.size(1)*z.size(2))
+        return loss/(z.size(0)*z.size(1)*z.size(2)) + mel_loss
+
 
 
 class Invertible1x1Conv(nn.Module):
@@ -117,16 +121,25 @@ class Invertible1x1Conv(nn.Module):
 class Decoder(nn.Module):
     def __init__(self, d_o, d_inner, n_head, d_mel_half, d_k, d_v, dropout=0.1):
         super(Decoder, self).__init__()
-        self.linear = nn.Linear(d_mel_half, d_o)  # 40 -> 256
+        self.linear = nn.Linear(d_mel_half, d_o)  # 40 -> 512
+        self.n_position = 1000
+        self.position_enc = nn.Embedding.from_pretrained(position_encoding(self.n_position, d_o, padding_idx=0), freeze=True)
         self.decoder = DecoderLayer(d_o, d_inner, n_head, d_k, d_v, dropout=dropout)
         self.output = nn.Linear(d_o, 2*d_mel_half)
+        self.norm = nn.LayerNorm(2*d_mel_half)
     
     def forward(self, mel_0, enc_output):
-        
+       
         mel_0 = mel_0.transpose(1, 2)
-        mel_0 = self.linear(mel_0) # 40 -> 256
+        mel_0 = self.linear(mel_0) # 40 -> 512
+        src = torch.arange(end=mel_0.size(1))
+        src = src.unsqueeze(0).cuda()
+        src = self.position_enc(src).type(torch.FloatTensor).cuda()
+        mel_0 = mel_0 + src
+
         dec_output, dec_enc_attn = self.decoder(mel_0, enc_output)
         dec_output = self.output(dec_output)
+        dec_output = self.norm(dec_output)
         dec_output = dec_output.transpose(1 ,2)
         return dec_output, dec_enc_attn
 
@@ -168,7 +181,7 @@ class WaveGlow(nn.Module):
             if k % self.n_early_every == 0 and k > 0:
                 n_remaining_channels = n_remaining_channels - self.n_early_size
             self.convinv.append(Invertible1x1Conv(n_remaining_channels))
-            self.decoder.append(Decoder(d_o=self.d_o, d_inner=self.d_inner, d_mel_half =n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
+            self.decoder.append(Decoder(d_o=self.d_model, d_inner=self.d_inner, d_mel_half =n_remaining_channels//2, n_head=self.n_head, d_k=self.d_k, d_v=self.d_v, dropout=self.dropout))
         self.n_remaining_channels = n_remaining_channels  # Useful during inference
 
     def forward(self, mel, words, src_pos):
@@ -179,7 +192,7 @@ class WaveGlow(nn.Module):
         log_s_list = []
         log_det_W_list = []
 
-        enc_output, enc_slf_attn_list = self.encoder(words, src_pos, return_attns=True)
+        enc_output, enc_slf_attn = self.encoder(words, src_pos, return_attns=True)
 
         for k in range(self.n_flows):
             if k % self.n_early_every == 0 and k > 0:
@@ -190,8 +203,8 @@ class WaveGlow(nn.Module):
             log_det_W_list.append(log_det_W)
 
             n_half = int(mel.size(1)/2)
-            mel_0 = mel[:,:n_half,:]
-            mel_1 = mel[:,n_half:,:]
+            mel_0 = mel[:, :n_half, :]
+            mel_1 = mel[:, n_half:, :]
 
 
             output, dec_enc_attn = self.decoder[k](mel_0, enc_output)
@@ -199,11 +212,39 @@ class WaveGlow(nn.Module):
             t = output[:, :n_half, :]
             mel_1 = torch.exp(log_s)*mel_1 + t
             log_s_list.append(log_s)
+            
+            '''for c in range (mel.size(1)):
+                if c%2 == 0:
+                    mel[:, c, :] = mel_0[:, c//2, :]
+                else:
+                    mel[:, c, :] = mel_1[:, (c-1)//2, :]'''
 
             mel = torch.cat([mel_0, mel_1], 1)
-
         output_mel.append(mel)
-        return torch.cat(output_mel, 1), log_s_list, log_det_W_list, enc_slf_attn_list[-1], dec_enc_attn
+
+        mel = mel[:, :int(mel.size(1)/2), :]
+
+        z = torch.cuda.FloatTensor(mel.size(0), mel.size(1), mel.size(2)).normal_()
+        mel = torch.cat((mel, z), 1)
+
+        for k in reversed(range(self.n_flows)):
+            n_half = int(mel.size(1)/2)
+            mel_0 = mel[:, :n_half, :]
+            mel_1 = mel[:, n_half:, :]
+
+            output, dec_enc_attn = self.decoder[k](mel_0, enc_output)
+            s = output[:, n_half:, :]
+            b = output[:, :n_half, :]
+            mel_1 = (mel_1 - b)/torch.exp(s)
+            mel = torch.cat([mel_0, mel_1], 1)
+
+            mel = self.convinv[k](mel, reverse=True)
+
+            if k % self.n_early_every == 0 and k > 0:
+                z = torch.cuda.FloatTensor(mel.size(0), self. n_early_size, mel.size(2)).normal_()
+                mel = torch.cat((z, mel), 1)
+
+        return torch.cat(output_mel, 1), log_s_list, log_det_W_list, enc_slf_attn, dec_enc_attn, mel
 
     def infer(self, words, sigma=1.0):
 

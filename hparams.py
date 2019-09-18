@@ -10,8 +10,8 @@ def create_hparams(hparams_string=None, verbose=False):
         # Experiment Parameters        #
         ################################
         epochs=500,
-        batch_size=8,
-        iters_per_checkpoint=1000,
+        batch_size=1,
+        iters_per_checkpoint=5000,
         seed=1234,
         dynamic_loss_scaling=True,
         fp16_run=False,
@@ -57,10 +57,10 @@ def create_hparams(hparams_string=None, verbose=False):
         d_k=64,
         d_v=64,
         n_head=8,
-        n_layers=3,
+        n_layers=6,
         d_hidden=2048,
 
-        dropout=0.1,
+        dropout=0.0,
         
         # Mel-post processing network parameters
         postnet_embedding_dim=512,
@@ -71,7 +71,7 @@ def create_hparams(hparams_string=None, verbose=False):
         # Optimization Hyperparameters #
         ################################
         use_saved_learning_rate=False,
-        learning_rate=1e-3,
+        learning_rate=1e-4,
         lr_last=1e-4,
         lr_decay_rate=0.8,
         lr_start_decay=50000,
@@ -90,7 +90,7 @@ def create_hparams(hparams_string=None, verbose=False):
         sigma=1.0,
         n_flows=12,
         n_group=8,
-        n_early_every=5,
+        n_early_every=4,
         n_early_size=20
 
     )

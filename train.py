@@ -84,6 +84,15 @@ def prepare_directories_and_logger(output_directory, log_directory):
     
     return logger
 
+def load_pretrained_taco(taco2_path, hparams):
+    assert os.path.isfile(taco2_path)
+    print("Loading pretrain2 tacotron2 model, '{}'".format(taco2_path))
+    checkpoint_dict = torch.load(checkpoint_path, map_location='cpu')
+    Taco2 = Tacotron2(hparams).cuda()
+    Taco2.load_state_dict(checkpoint_dict['state_dict'])
+    print("Loaded pretrain2 tacotron2 model, '{}'".format(taco2_path))
+    return Taco2
+
 
 def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoint_path, hparams):
     torch.manual_seed(hparams.seed)
@@ -96,6 +105,7 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
 
     criterion = WaveGlowLoss(hparams.sigma)
     model = WaveGlow(hparams).cuda()
+
 
     #=====START: ADDED FOR DISTRIBUTED======
     if num_gpus > 1:
@@ -153,16 +163,11 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
             src_pos = torch.arange(hparams.n_position)
             src_pos = to_gpu(src_pos).long().unsqueeze(0)
             src_pos = src_pos.expand(hparams.batch_size, -1)
-            '''print (src_pos.size())
-            print (input_lengths)
-            print (max_len)
-            print (output_lengths)
-            print (hparams.n_symbols)
-            print (src_pos)
-            sys.exit()'''
-            z, log_s_list, log_det_w_list, enc_slf_attn, dec_enc_attn = model(mel_padded, text_padded, src_pos)
-            outputs = (z, log_s_list, log_det_w_list)
-            loss = criterion(outputs)
+                
+
+            z, log_s_list, log_det_w_list, enc_slf_attn, dec_enc_attn, out_mel = model(mel_padded, text_padded, src_pos)
+            outputs = (z, log_s_list, log_det_w_list, out_mel)
+            loss = criterion(outputs, mel_padded, iteration)
             if num_gpus > 1:
                 reduced_loss = reduce_tensor(loss.data, num_gpus).item()
             else:
@@ -184,7 +189,7 @@ def train(num_gpus, rank, group_name, output_directory, log_directory, checkpoin
 
             if (iteration % hparams.iters_per_checkpoint == 0):
                 if rank == 0:
-                    logger.log_alignment(model, enc_slf_attn, dec_enc_attn, iteration)
+                    logger.log_alignment(model, enc_slf_attn, dec_enc_attn, out_mel, mel_padded, iteration)
                     checkpoint_path = "{}/waveglow_{}".format(
                         output_directory, iteration)
                     save_checkpoint(model, optimizer, learning_rate, iteration,
